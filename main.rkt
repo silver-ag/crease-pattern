@@ -4,7 +4,7 @@
 ;; TODO: replace set->list with something that definitely garauntees order
 ;; TODO: composing overlapping lines where one is U should replace the overlapped section with the other type
 
-(require predicates)
+(require predicates json)
 
 ;;;;;;;;;;;;
 ;; structs
@@ -13,13 +13,13 @@
 (struct line
   (s1 d1 ;; s in {0,1,2,3}, s1 <= s2 [side of unit square, clockwise from top]
    s2 d2 ;; 0<=d<1, if s1=s2 then d1<=d2 [length clockwise along side]
-   segments) ;; list of segments
+   segments) ;; set of segments
   #:guard (λ (s1 d1 s2 d2 segments name)
             (if (and (member s1 '(0 1 2 3)) (member s2 '(0 1 2 3)) ;; check conditions above
                      (<= 0 d1) (< d1 1) (<= 0 d2) (< d2 1)
-                     ((all? segment?) segments)
+                     ((all? segment?) (set->list segments))
                      (foldl (λ (s prev)
-                              (cond ;; segments aren't overlapping, out of order or uneccesarily divided (ie. 0 0.5 M, 0.5 1 M isn't allowed)
+                              (cond ;; segments aren't overlapping or uneccesarily divided (ie. 0 0.5 M, 0.5 1 M isn't allowed)
                                 [(> (segment-d1 s) (car prev)) (cons (segment-d2 s)
                                                                      (segment-type s))]
                                 [(= (segment-d1 s) (car prev)) (if (equal? (segment-type s)
@@ -27,8 +27,8 @@
                                                                    (raise "invalid list of segments (adjacent segments of same type should be merged)")
                                                                    (cons (segment-d2 s)
                                                                          (segment-type s)))]
-                                [else (raise (format "invalid list of segments (overlapping or out of order): ~a" segments))]))
-                            (cons 0 'not-a-type) segments)
+                                [else (raise (format "invalid list of segments (overlapping): ~a" segments))]))
+                            (cons 0 'not-a-type) (sort-segments (set->list segments)))
                      (or (< s1 s2) ;; ensure smaller-numbered point specified first
                          (and (= s1 s2)
                               (<= d1 d2)))) 
@@ -50,6 +50,35 @@
 ;;;;;;;;;;;;;;;
 ;; operations
 ;;;;
+
+(define (jsexpr->cp js)
+  ;; returns cp or #f if it couldn't be translated for any reason
+  ;; see SPEC.md
+  (with-handlers [[exn:fail? (λ (e) #f)]]
+    (apply
+     set (map (λ (l)
+                (let [[p1 (hash-ref l 'point1)]
+                      [p2 (hash-ref l 'point2)]]
+                  (line (hash-ref p1 'side) (hash-ref p1 'distance)
+                        (hash-ref p2 'side) (hash-ref p2 'distance)
+                        (apply set
+                               (set-map (hash-ref l 'segments)
+                                        (λ (seg)
+                                          (segment (hash-ref seg 'start) (hash-ref seg 'stop) (case (hash-ref seg 'type)
+                                                                                                [("M") 'M][("V") 'V][("U") 'U]))))))))
+              js))))
+
+(define (cp->jsexpr cp)
+  ;; see SPEC.md
+  (set-map cp
+           (λ (l) (hash 'point1 (hash 'side (line-s1 l) 'distance (line-d1 l))
+                        'point2 (hash 'side (line-s2 l) 'distance (line-d2 l))
+                        'segments (apply set
+                                         (set-map (line-segments l)
+                                                  (λ (s)
+                                                    (hash 'start (segment-d1 s) 'stop (segment-d2 s)
+                                                          'type (case (segment-type s)
+                                                                  [(M) "M"] [(V) "V"] [(U) "U"])))))))))
 
 (define (cp->svg cp #:size [size 100] #:show-full-lines? [show-full-lines? #f])
   ;; show-full-lines? adds grey lines along the whole lengths that the segments lie on
@@ -75,19 +104,19 @@
                        (cp->cartesian-segments cp))))))
 
 (define (cp-compose cp1 cp2)
-  ;; combines two cps, or returns #f if they can't be combined because of overlapping lines of opposite types
+  ;; combines two cps, or returns #f if they can't be combined because of overlapping lines of different types
   (if (equal? cp1 (set))
       cp2
       (let* [[l1 (set-first cp1)]
              [l2 (cp-line-on cp2 (line-s1 l1) (line-d1 l1) (line-s2 l1) (line-d2 l1))]
-             [segments-cp1 (line-segments l1)]
-             [segments-cp2 (if l2 (line-segments l2) '())]
+             [segments-cp1 (sort-segments (set->list (line-segments l1)))]
+             [segments-cp2 (sort-segments (set->list (if l2 (line-segments l2) (set))))]
              [new-segments (line-compose segments-cp1 segments-cp2)]]
         (if new-segments
             (cp-compose (set-remove cp1 l1) (set-add (if l2 (set-remove cp2 l2) cp2)
                                                          (line (line-s1 l1) (line-d1 l1)
                                                                (line-s2 l1) (line-d2 l1)
-                                                               new-segments)))
+                                                               (apply set new-segments))))
             #f))))
 
 (define (cp-shared-lines cp1 cp2)
@@ -98,6 +127,15 @@
                (set-map cp1 (λ (l) (cp-line-on cp2
                                                (line-s1 l) (line-d1 l)
                                                (line-s2 l) (line-d2 l)))))))
+
+(define (cp-rotate cp [n 1])
+  (apply set
+         (set-map cp (λ (l)
+                       (let [[new-s1 (remainder (+ n (line-s1 l)) 4)]
+                             [new-s2 (remainder (+ n (line-s2 l)) 4)]]
+                         (struct-copy line l
+                                      [s1 (if (<= new-s1 new-s2) new-s1 new-s2)]
+                                      [s2 (if (<= new-s1 new-s2) new-s2 new-s1)]))))))
 
 ;;;;;;;;;;;;;;;;;;;;;
 ;; helper functions
@@ -112,13 +150,13 @@
                        [p2 (line-coord->cartesian (line-s2 l) (line-d2 l))]
                        [dx (- (first p2) (first p1))]
                        [dy (- (second p2) (second p1))]]
-                  (map (λ (s)
-                         (list (+ (first p1) (* (segment-d1 s) dx))
-                               (+ (second p1) (* (segment-d1 s) dy))
-                               (+ (first p1) (* (segment-d2 s) dx))
-                               (+ (second p1) (* (segment-d2 s) dy))
-                               (segment-type s)))
-                     (line-segments l))))
+                  (set-map (line-segments l)
+                           (λ (s)
+                             (list (+ (first p1) (* (segment-d1 s) dx))
+                                   (+ (second p1) (* (segment-d1 s) dy))
+                                   (+ (first p1) (* (segment-d2 s) dx))
+                                   (+ (second p1) (* (segment-d2 s) dy))
+                                   (segment-type s))))))
               (set->list cp))))
 
 (define (line-coord->cartesian s d)
@@ -173,6 +211,9 @@
                           next-result)
             #f))))
 
+(define (sort-segments segments)
+  (sort segments (λ (s1 s2) (< (segment-d1 s1) (segment-d1 s2)))))
+
 ;;;;;;;;;;;;;;;
 ;; provisions
 ;;;;
@@ -182,19 +223,21 @@
          cp->svg
          cp-compose
          cp-shared-lines
-         cp->cartesian-segments)
+         cp->cartesian-segments
+         cp->jsexpr
+         jsexpr->cp)
 
 ;;;;;;;;;;;;
 ;; testing
 ;;;;
 
-;(define waterbomb
-;  (set (line 0 0 2 0 (list (segment 0 1 'M)))
-;       (line 1 0 3 0 (list (segment 0 1 'M)))
-;       (line 0 0.5 2 0.5 (list (segment 0 1 'V)))
-;       (line 1 0.5 3 0.5 (list (segment 0 1 'V)))))
+(define waterbomb
+  (set (line 0 0 2 0 (set (segment 0 1 'M)))
+       (line 1 0 3 0 (set (segment 0 1 'M)))
+       (line 0 0.5 2 0.5 (set (segment 0 1 'V)))
+       (line 1 0.5 3 0.5 (set (segment 0 1 'V)))))
 
-;(define D
-;  (set (line 0 0.5 2 0.5 (list (segment 0 0.3 'V) (segment 0.7 1 'U)))
-;       (line 0 0.5 1 0.5 (list (segment 0 1 'M)))
-;       (line 1 0.5 2 0.5 (list (segment 0 1 'M)))))
+(define D
+  (set (line 0 0.5 2 0.5 (set  (segment 0.7 1 'V) (segment 0 0.3 'V)))
+       (line 0 0.5 1 0.5 (set (segment 0 1 'M)))
+       (line 1 0.5 2 0.5 (set (segment 0 1 'M)))))
