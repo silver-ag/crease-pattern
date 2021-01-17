@@ -1,15 +1,15 @@
-### Crease Pattern Format
+# Crease Pattern Format
 
 Crease patterns are JSON objects. A crease pattern consists of a list of lines, each of which has a list of segments on that line which are the actual creases.
 Strictly speaking, it represents a set of line segments on the unit square, each of which is Mountain, Valley or neither.
 
-# Pattern
+### Pattern
 A Pattern is a list of Lines. No two Lines in a single Pattern may have both points equal to each other.
 ```
 [<line1>,<line2>,...,<linen>]
 ```
 
-# Line
+### Line
 A Line has two Points specifying the Line itself, and a list of Segments. Each point consists of a Side and a Distance. The Side is an integer 0-3 inclusive and
 represents a side of the unit square, with 0 representing the top side, 1 the right, 2 the bottom and 3 the left. The Distance is a number larger than or equal to 0
 and strictly smaller than 1\*, and represents a distance along that side in a clockwise direction. The Side of `point1` must be smaller than or equal to the Side of
@@ -24,7 +24,7 @@ A Line also has a list of Segments. None of the Segments in the list may overlap
   segments: [<segment1>,<segment2>,...,<segmentn>] }
 ```
 
-# Segments
+### Segments
 A Segment has two Lengths, representing the proportions of the way along the parent line where the Segment starts and stops. These may be 0-1 inclusive. A Segment
 also has a Type, which may be "M", "V" or "U" - standing for Mountain, Valley or Unspecified. The start Length must be less than or equal to the stop Length.
 ```
