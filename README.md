@@ -11,6 +11,7 @@ See SPEC.md for the specification of the format.
 The crease-pattern library provides the following structs:
 * the `(line s1 d1 s2 d2 segments)` struct, where `s1`-`d2` are the sides and distances of the two points as explained in SPEC.md and `segments` is a `set` of segments
 * the `(segment d1 d2 type)` struct, where `d1` and `d2` are the start and stop points of the segment and `type` is the type as a symbol (`'M`,`'V` or `'U`)
+
 See SPEC.md for the meanings of the arguments. A set of `line`s is a crease pattern, which can be used with the following functions:
 * `(cp->jsexpr <crease pattern>)` and `(jsexpr->cp <jsexpr>)` convert between crease patterns and jsexprs of the json representation defined in SPEC.md
 * `(cp->cartesian-segments <crease pattern>)` takes a crease pattern to a list of lists in the form `(<x1> <y1> <x2> <y2> <type>)`, specifying the segments in cartesian coordinates (useful for drawing them for instance)
